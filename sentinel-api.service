@@ -1,0 +1,15 @@
+[Unit]
+Description=Sentinel API Server
+After=network.target sentinel.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/sentinel
+ExecStart=/usr/bin/python3 /opt/sentinel/sentinel.py api --host 127.0.0.1 --port 9092
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target
