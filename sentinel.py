@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Sentinel — AI Agency Orchestrator
+Sentinel — AI Agency Orchestrator v1.1.0
 Orchestrates a team of AI agents with heartbeat scheduling,
-output routing, dependency chains, and org-tree governance.
+output routing, dependency chains, retry logic, failure alerts,
+and real API enrichment.
 """
 
 import argparse
@@ -13,8 +14,7 @@ import os
 import sys
 import time
 import traceback
-from datetime import datetime
-from enum import Enum
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -39,6 +39,26 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger("Sentinel")
+
+# ─── Retry Configuration ───────────────────────────
+RETRY_CONFIG = {
+    "max_retries": 3,
+    "base_delay_seconds": 2.0,
+    "backoff_multiplier": 2.0,
+    "max_delay_seconds": 30.0,
+}
+
+# ─── Alert Configuration ────────────────────────────
+ALERT_CONFIG = {
+    "telegram_bot_token": os.environ.get("SENTINEL_TELEGRAM_BOT_TOKEN", ""),
+    "telegram_chat_id": os.environ.get("SENTINEL_TELEGRAM_CHAT_ID", ""),
+    "slack_webhook_url": os.environ.get("SENTINEL_SLACK_WEBHOOK_URL", ""),
+    "enabled": bool(
+        os.environ.get("SENTINEL_TELEGRAM_BOT_TOKEN", "")
+        or os.environ.get("SENTINEL_SLACK_WEBHOOK_URL", "")
+    ),
+    "cooldown_minutes": 5,
+}
 
 
 # ═══════════════════════════════════════════════════
@@ -92,8 +112,99 @@ class SentinelState:
             history = history[-200:]
         self.set(key, history)
 
+    def get_retry_count(self, agent_id: str) -> int:
+        return self.get_agent_state(agent_id).get("retry_count", 0)
+
+    def set_retry_count(self, agent_id: str, count: int):
+        agent_state = self.get_agent_state(agent_id)
+        agent_state["retry_count"] = count
+        self.set_agent_state(agent_id, agent_state)
+
+    def get_last_alert_time(self, agent_id: str) -> Optional[str]:
+        return self.get(f"last_alert:{agent_id}", None)
+
+    def set_last_alert_time(self, agent_id: str, ts: str):
+        self.set(f"last_alert:{agent_id}", ts)
+
 
 state = SentinelState(STATE_DIR / "sentinel.json")
+
+
+# ═══════════════════════════════════════════════════
+# Alert System
+# ═══════════════════════════════════════════════════
+
+class SentinelAlert:
+    """Sends failure alerts via Telegram (preferred) or Slack."""
+
+    @staticmethod
+    async def send(agent_id: str, result: Dict, is_retry: bool = False):
+        if not ALERT_CONFIG["enabled"]:
+            return
+
+        # Cooldown check
+        last_alert = state.get_last_alert_time(agent_id)
+        if last_alert:
+            last_dt = datetime.fromisoformat(last_alert)
+            if datetime.utcnow() - last_dt < timedelta(minutes=ALERT_CONFIG["cooldown_minutes"]):
+                return
+
+        config = AGENTS_CONFIG.get(agent_id, {})
+        agent_name = config.get("name", agent_id)
+        run_id = result.get("run_id", "unknown")
+        status = result.get("status", "unknown")
+        error = result.get("error", result.get("stdout_tail", "No details"))[:500]
+        retry_text = f" (Retry attempt)" if is_retry else ""
+
+        message = (
+            f"🚨 *Sentinel Alert*{retry_text}\n\n"
+            f"*Agent:* {agent_name}\n"
+            f"*Status:* `{status}`\n"
+            f"*Run ID:* `{run_id}`\n"
+            f"*Time:* {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+            f"```\n{error}\n```"
+        )
+
+        # Try Telegram first (we're already on Telegram)
+        if ALERT_CONFIG["telegram_bot_token"] and ALERT_CONFIG["telegram_chat_id"]:
+            await SentinelAlert._send_telegram(message)
+        # Fallback to Slack
+        elif ALERT_CONFIG["slack_webhook_url"]:
+            await SentinelAlert._send_slack(message)
+
+        state.set_last_alert_time(agent_id, datetime.utcnow().isoformat())
+
+    @staticmethod
+    async def _send_telegram(message: str):
+        import urllib.request
+        import urllib.parse
+        token = ALERT_CONFIG["telegram_bot_token"]
+        chat_id = ALERT_CONFIG["telegram_chat_id"]
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "text": message,
+            "parse_mode": "Markdown",
+        }).encode()
+        try:
+            req = urllib.request.Request(url, data=data, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                logger.info(f"Telegram alert sent: {resp.status}")
+        except Exception as e:
+            logger.warning(f"Telegram alert failed: {e}")
+
+    @staticmethod
+    async def _send_slack(message: str):
+        import urllib.request
+        import json as _json
+        url = ALERT_CONFIG["slack_webhook_url"]
+        payload = _json.dumps({"text": message.replace("*", "**").replace("`", "")}).encode()
+        try:
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                logger.info(f"Slack alert sent: {resp.status}")
+        except Exception as e:
+            logger.warning(f"Slack alert failed: {e}")
 
 
 # ═══════════════════════════════════════════════════
@@ -272,7 +383,7 @@ class SentinelScheduler:
 
 
 # ═══════════════════════════════════════════════════
-# Executor
+# Executor with Retry
 # ═══════════════════════════════════════════════════
 
 class SentinelExecutor:
@@ -281,13 +392,14 @@ class SentinelExecutor:
         agent_id: str,
         manual_params: Optional[Dict] = None,
         triggered_by: Optional[str] = None,
+        retry_count: int = 0,
     ) -> Dict:
         config = AGENTS_CONFIG.get(agent_id)
         if not config:
             raise ValueError(f"Unknown agent: {agent_id}")
 
         run_id = f"{agent_id}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{os.urandom(2).hex()}"
-        logger.info(f"[{run_id}] Starting {config['name']}")
+        logger.info(f"[{run_id}] Starting {config['name']} (attempt {retry_count + 1})")
 
         agent_state = state.get_agent_state(agent_id)
         agent_state["last_run_at"] = datetime.utcnow().isoformat()
@@ -298,7 +410,6 @@ class SentinelExecutor:
         start_time = time.time()
 
         try:
-            # Parse args that look like --env=KEY=VALUE
             cmd = []
             env = os.environ.copy()
             wd = config.get("working_dir", str(SENTINEL_ROOT))
@@ -319,6 +430,7 @@ class SentinelExecutor:
             env["SENTINEL_RUN_ID"] = run_id
             env["SENTINEL_AGENT_ID"] = agent_id
             env["SENTINEL_AGENT_NAME"] = config["name"]
+            env["SENTINEL_RETRY_COUNT"] = str(retry_count)
             if triggered_by:
                 env["SENTINEL_TRIGGERED_BY"] = triggered_by
             if manual_params:
@@ -355,6 +467,7 @@ class SentinelExecutor:
                 "outputs": outputs,
                 "stdout_tail": stdout_text[-2000:],
                 "triggered_by": triggered_by,
+                "retry_count": retry_count,
             }
 
             agent_state = state.get_agent_state(agent_id)
@@ -367,7 +480,28 @@ class SentinelExecutor:
             state.record_run(agent_id, result)
 
             logger.info(f"[{run_id}] {status} ({elapsed:.1f}s)")
-            await SentinelRouter.route(agent_id, result)
+
+            # ─── Retry on failure ─────────────────────
+            if status == "failed" and retry_count < RETRY_CONFIG["max_retries"]:
+                delay = min(
+                    RETRY_CONFIG["base_delay_seconds"] * (RETRY_CONFIG["backoff_multiplier"] ** retry_count),
+                    RETRY_CONFIG["max_delay_seconds"],
+                )
+                logger.info(f"[{run_id}] Retrying in {delay:.1f}s (attempt {retry_count + 2}/{RETRY_CONFIG['max_retries'] + 1})")
+                await asyncio.sleep(delay)
+                return await SentinelExecutor.run_agent(
+                    agent_id, manual_params, triggered_by, retry_count + 1
+                )
+
+            # ─── Alert on final failure ─────────────────
+            if status == "failed" and retry_count >= RETRY_CONFIG["max_retries"]:
+                logger.error(f"[{run_id}] Max retries exceeded for {agent_id}")
+                await SentinelAlert.send(agent_id, result, is_retry=False)
+
+            # ─── Route on success ─────────────────────
+            if status == "success":
+                await SentinelRouter.route(agent_id, result)
+
             return result
 
         except Exception as e:
@@ -384,6 +518,7 @@ class SentinelExecutor:
                 "started_at": datetime.utcnow().isoformat(),
                 "elapsed_seconds": round(elapsed, 2),
                 "outputs": {},
+                "retry_count": retry_count,
             }
 
             agent_state = state.get_agent_state(agent_id)
@@ -391,6 +526,21 @@ class SentinelExecutor:
             agent_state["current_run_id"] = None
             state.set_agent_state(agent_id, agent_state)
             state.record_run(agent_id, result)
+
+            # Retry on exception too
+            if retry_count < RETRY_CONFIG["max_retries"]:
+                delay = min(
+                    RETRY_CONFIG["base_delay_seconds"] * (RETRY_CONFIG["backoff_multiplier"] ** retry_count),
+                    RETRY_CONFIG["max_delay_seconds"],
+                )
+                logger.info(f"[{run_id}] Exception retry in {delay:.1f}s")
+                await asyncio.sleep(delay)
+                return await SentinelExecutor.run_agent(
+                    agent_id, manual_params, triggered_by, retry_count + 1
+                )
+
+            # Final failure alert
+            await SentinelAlert.send(agent_id, result, is_retry=False)
             return result
 
     @staticmethod
@@ -465,6 +615,60 @@ class SentinelRouter:
 
 
 # ═══════════════════════════════════════════════════
+# API Enrichment Module
+# ═══════════════════════════════════════════════════
+
+class APIEnrichment:
+    """Fetches real data from public APIs for agent enrichment."""
+
+    @staticmethod
+    async def fetch_news(query: str, api_key: str = "") -> List[Dict]:
+        """Fetch news articles for SEO/content inspiration."""
+        if not api_key:
+            return []
+        import urllib.request
+        import json as _json
+        url = f"https://newsapi.org/v2/everything?q={urllib.parse.quote(query)}&sortBy=relevancy&pageSize=5&apiKey={api_key}"
+        try:
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                data = _json.loads(resp.read())
+                return data.get("articles", [])
+        except Exception as e:
+            logger.warning(f"NewsAPI fetch failed: {e}")
+            return []
+
+    @staticmethod
+    async def fetch_trending_searches(geo: str = "US") -> List[str]:
+        """Fetch trending Google searches (requires SerpAPI or similar)."""
+        return []  # Placeholder — requires paid API
+
+    @staticmethod
+    async def fetch_weather(city: str) -> Dict:
+        """Fetch weather for location-based content."""
+        import urllib.request
+        import json as _json
+        url = f"https://wttr.in/{city}?format=j1"
+        try:
+            with urllib.request.urlopen(url, timeout=10) as resp:
+                return _json.loads(resp.read())
+        except Exception as e:
+            logger.warning(f"Weather fetch failed: {e}")
+            return {}
+
+    @staticmethod
+    async def fetch_random_quote() -> Dict:
+        """Fetch inspirational quote for social content."""
+        import urllib.request
+        import json as _json
+        try:
+            with urllib.request.urlopen("https://api.quotable.io/random", timeout=10) as resp:
+                return _json.loads(resp.read())
+        except Exception as e:
+            logger.warning(f"Quote fetch failed: {e}")
+            return {}
+
+
+# ═══════════════════════════════════════════════════
 # Flask API
 # ═══════════════════════════════════════════════════
 
@@ -477,7 +681,7 @@ except ImportError:
 if api_app:
     @api_app.route("/api/sentinel/health", methods=["GET"])
     def health():
-        return jsonify({"status": "healthy", "version": "1.0.0", "timestamp": datetime.utcnow().isoformat()})
+        return jsonify({"status": "healthy", "version": "1.1.0", "timestamp": datetime.utcnow().isoformat()})
 
     @api_app.route("/api/sentinel/agents", methods=["GET"])
     def list_agents():
@@ -494,6 +698,7 @@ if api_app:
                 "last_run_at": agent_state.get("last_run_at"),
                 "last_run_id": agent_state.get("last_run_id"),
                 "last_outputs": agent_state.get("last_outputs", {}),
+                "retry_count": agent_state.get("retry_count", 0),
             })
         return jsonify({"agents": agents})
 
@@ -540,12 +745,23 @@ if api_app:
                 "last_run_duration": agent_state.get("last_run_duration"),
                 "last_outputs": agent_state.get("last_outputs", {}),
                 "current_run_id": agent_state.get("current_run_id"),
+                "retry_count": agent_state.get("retry_count", 0),
             })
         return jsonify({
             "orchestrator": "Sentinel",
+            "version": "1.1.0",
             "timestamp": datetime.utcnow().isoformat(),
             "agents": agents_status,
             "chains": list(CHAINS_CONFIG.keys()),
+            "retry_policy": RETRY_CONFIG,
+            "alerts_enabled": ALERT_CONFIG["enabled"],
+        })
+
+    @api_app.route("/api/sentinel/config", methods=["GET"])
+    def get_config():
+        return jsonify({
+            "retry": RETRY_CONFIG,
+            "alerts": {k: v for k, v in ALERT_CONFIG.items() if k != "slack_webhook_url"},
         })
 
 
@@ -554,8 +770,8 @@ if api_app:
 # ═══════════════════════════════════════════════════
 
 async def main():
-    parser = argparse.ArgumentParser(description="Sentinel — AI Agency Orchestrator")
-    parser.add_argument("--config", help="Path to JSON/YAML config dir", default=str(CONFIG_DIR))
+    parser = argparse.ArgumentParser(description="Sentinel — AI Agency Orchestrator v1.1.0")
+    parser.add_argument("--config", help="Path to config dir", default=str(CONFIG_DIR))
     subparsers = parser.add_subparsers(dest="command")
 
     run_parser = subparsers.add_parser("run", help="Run a single agent")
