@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Sentinel — AI Agency Orchestrator v1.1.0
+Sentinel — AI Agency Orchestrator v1.2.0
 Orchestrates a team of AI agents with heartbeat scheduling,
 output routing, dependency chains, retry logic, failure alerts,
-and real API enrichment.
+circuit breaker, daily digest, visual dashboard, and real API enrichment.
 """
 
 import argparse
@@ -14,6 +14,8 @@ import os
 import sys
 import time
 import traceback
+import urllib.request
+import urllib.parse
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -48,7 +50,7 @@ RETRY_CONFIG = {
     "max_delay_seconds": 30.0,
 }
 
-# ─── Alert Configuration ────────────────────────────
+# ─── Alert Configuration ──────────────────────────────
 ALERT_CONFIG = {
     "telegram_bot_token": os.environ.get("SENTINEL_TELEGRAM_BOT_TOKEN", ""),
     "telegram_chat_id": os.environ.get("SENTINEL_TELEGRAM_CHAT_ID", ""),
@@ -58,6 +60,13 @@ ALERT_CONFIG = {
         or os.environ.get("SENTINEL_SLACK_WEBHOOK_URL", "")
     ),
     "cooldown_minutes": 5,
+}
+
+# ─── Circuit Breaker Configuration ───────────────────
+CIRCUIT_CONFIG = {
+    "failure_threshold": 5,
+    "window_minutes": 60,
+    "cooldown_minutes": 30,
 }
 
 
@@ -131,11 +140,11 @@ state = SentinelState(STATE_DIR / "sentinel.json")
 
 
 # ═══════════════════════════════════════════════════
-# Alert System
+# Alert System (Telegram + Slack fallback)
 # ═══════════════════════════════════════════════════
 
 class SentinelAlert:
-    """Sends failure alerts via Telegram (preferred) or Slack."""
+    """Sends failure alerts via Telegram (preferred) or Slack fallback."""
 
     @staticmethod
     async def send(agent_id: str, result: Dict, is_retry: bool = False):
@@ -165,19 +174,19 @@ class SentinelAlert:
             f"```\n{error}\n```"
         )
 
-        # Try Telegram first (we're already on Telegram)
+        # Try Telegram first
+        telegram_ok = False
         if ALERT_CONFIG["telegram_bot_token"] and ALERT_CONFIG["telegram_chat_id"]:
-            await SentinelAlert._send_telegram(message)
-        # Fallback to Slack
-        elif ALERT_CONFIG["slack_webhook_url"]:
+            telegram_ok = await SentinelAlert._send_telegram(message)
+
+        # Fallback to Slack if Telegram failed
+        if not telegram_ok and ALERT_CONFIG["slack_webhook_url"]:
             await SentinelAlert._send_slack(message)
 
         state.set_last_alert_time(agent_id, datetime.utcnow().isoformat())
 
     @staticmethod
-    async def _send_telegram(message: str):
-        import urllib.request
-        import urllib.parse
+    async def _send_telegram(message: str) -> bool:
         token = ALERT_CONFIG["telegram_bot_token"]
         chat_id = ALERT_CONFIG["telegram_chat_id"]
         url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -189,22 +198,131 @@ class SentinelAlert:
         try:
             req = urllib.request.Request(url, data=data, method="POST")
             with urllib.request.urlopen(req, timeout=10) as resp:
-                logger.info(f"Telegram alert sent: {resp.status}")
+                return 200 <= resp.status < 300
         except Exception as e:
             logger.warning(f"Telegram alert failed: {e}")
+            return False
 
     @staticmethod
     async def _send_slack(message: str):
-        import urllib.request
-        import json as _json
         url = ALERT_CONFIG["slack_webhook_url"]
-        payload = _json.dumps({"text": message.replace("*", "**").replace("`", "")}).encode()
+        payload = json.dumps({"text": message.replace("*", "**").replace("`", "")}).encode()
         try:
             req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
             with urllib.request.urlopen(req, timeout=10) as resp:
                 logger.info(f"Slack alert sent: {resp.status}")
         except Exception as e:
             logger.warning(f"Slack alert failed: {e}")
+
+    @staticmethod
+    async def send_digest():
+        """Send daily morning digest of all agent status."""
+        if not ALERT_CONFIG["enabled"]:
+            return
+
+        lines = ["📋 *Sentinel Daily Digest*\n"]
+        lines.append(f"_{datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}_\n")
+
+        for agent_id, config in AGENTS_CONFIG.items():
+            agent_state = state.get_agent_state(agent_id)
+            status = agent_state.get("status", "pending")
+            last_run = agent_state.get("last_run_at", "never")
+            if last_run != "never":
+                try:
+                    dt = datetime.fromisoformat(last_run)
+                    last_run = dt.strftime("%H:%M")
+                except:
+                    pass
+
+            # Emoji based on status
+            emoji = {"success": "✅", "failed": "❌", "running": "🔄", "pending": "⏳", "circuit_open": "⛔"}.get(status, "❓")
+            lines.append(f"{emoji} *{config['name']}*: {status} (last: {last_run})")
+
+        # Failure summary
+        total_failures = 0
+        for agent_id in AGENTS_CONFIG:
+            history = state.get_run_history(agent_id, 24)
+            total_failures += sum(1 for r in history if r.get("status") == "failed")
+
+        if total_failures == 0:
+            lines.append("\n🎉 *All agents clean — no failures in last 24h*")
+        else:
+            lines.append(f"\n⚠️ *{total_failures} failures* in last 24h")
+
+        message = "\n".join(lines)
+
+        # Try Telegram
+        telegram_ok = False
+        if ALERT_CONFIG["telegram_bot_token"] and ALERT_CONFIG["telegram_chat_id"]:
+            telegram_ok = await SentinelAlert._send_telegram(message)
+
+        # Fallback to Slack
+        if not telegram_ok and ALERT_CONFIG["slack_webhook_url"]:
+            await SentinelAlert._send_slack(message)
+
+        logger.info("Daily digest sent")
+
+
+# ═══════════════════════════════════════════════════
+# Circuit Breaker
+# ═══════════════════════════════════════════════════
+
+class CircuitBreaker:
+    """Prevents repeated failure spam by opening circuit after threshold."""
+
+    @staticmethod
+    def is_open(agent_id: str) -> bool:
+        agent_state = state.get_agent_state(agent_id)
+        if agent_state.get("circuit_open", False):
+            opened_at = agent_state.get("circuit_opened_at", "")
+            if opened_at:
+                try:
+                    dt = datetime.fromisoformat(opened_at)
+                    if datetime.utcnow() - dt < timedelta(minutes=CIRCUIT_CONFIG["cooldown_minutes"]):
+                        return True
+                    # Auto-close after cooldown
+                    agent_state["circuit_open"] = False
+                    agent_state["circuit_opened_at"] = None
+                    agent_state["failure_count"] = 0
+                    state.set_agent_state(agent_id, agent_state)
+                    logger.info(f"Circuit closed for {agent_id}")
+                    return False
+                except:
+                    return False
+        return False
+
+    @staticmethod
+    def record_failure(agent_id: str):
+        agent_state = state.get_agent_state(agent_id)
+        failures = agent_state.get("failure_count", 0) + 1
+        agent_state["failure_count"] = failures
+
+        # Check if threshold exceeded within window
+        history = state.get_run_history(agent_id, CIRCUIT_CONFIG["failure_threshold"] * 2)
+        window_start = datetime.utcnow() - timedelta(minutes=CIRCUIT_CONFIG["window_minutes"])
+        recent_failures = sum(
+            1 for h in history
+            if h.get("status") == "failed"
+            and datetime.fromisoformat(h.get("started_at", "1970-01-01")) > window_start
+        )
+
+        if recent_failures >= CIRCUIT_CONFIG["failure_threshold"]:
+            agent_state["circuit_open"] = True
+            agent_state["circuit_opened_at"] = datetime.utcnow().isoformat()
+            logger.warning(
+                f"CIRCUIT OPEN for {agent_id}: {recent_failures} failures in "
+                f"{CIRCUIT_CONFIG['window_minutes']}min. Cooldown: {CIRCUIT_CONFIG['cooldown_minutes']}min"
+            )
+
+        state.set_agent_state(agent_id, agent_state)
+
+    @staticmethod
+    def record_success(agent_id: str):
+        agent_state = state.get_agent_state(agent_id)
+        if agent_state.get("failure_count", 0) > 0:
+            agent_state["failure_count"] = 0
+            state.set_agent_state(agent_id, agent_state)
+            logger.info(f"Failure counter reset for {agent_id} after success")
 
 
 # ═══════════════════════════════════════════════════
@@ -337,27 +455,39 @@ def parse_cron(cron_expr: str, now: datetime) -> bool:
 
 
 # ═══════════════════════════════════════════════════
-# Scheduler
+# Scheduler with Digest
 # ═══════════════════════════════════════════════════
 
 class SentinelScheduler:
     def __init__(self):
         self._running = False
+        self._last_digest_day = None
 
     async def _tick(self):
         now = datetime.utcnow()
         logger.debug(f"Tick: {now.isoformat()}")
 
+        # Daily digest at 8:00 AM UTC
+        if now.hour == 8 and now.minute == 0:
+            today = now.strftime("%Y-%m-%d")
+            if self._last_digest_day != today:
+                await SentinelAlert.send_digest()
+                self._last_digest_day = today
+
         for agent_id, config in AGENTS_CONFIG.items():
+            # Circuit breaker check
+            if CircuitBreaker.is_open(agent_id):
+                logger.warning(f"{agent_id}: circuit open — skipping schedule")
+                continue
+
             agent_state = state.get_agent_state(agent_id)
             last_run_t = agent_state.get("last_run_at")
 
             for cron in config["schedules"]:
                 if parse_cron(cron, now):
                     if last_run_t:
-                        from datetime import datetime as _dt
                         try:
-                            last_dt = _dt.fromisoformat(last_run_t)
+                            last_dt = datetime.fromisoformat(last_run_t)
                             if last_dt.replace(second=0, microsecond=0) == now.replace(second=0, microsecond=0):
                                 continue
                         except:
@@ -398,6 +528,17 @@ class SentinelExecutor:
         if not config:
             raise ValueError(f"Unknown agent: {agent_id}")
 
+        # Circuit breaker check
+        if CircuitBreaker.is_open(agent_id):
+            logger.warning(f"[{agent_id}] Circuit open — refusing run")
+            return {
+                "run_id": "circuit-open",
+                "agent_id": agent_id,
+                "agent_name": config["name"],
+                "status": "circuit_open",
+                "error": "Circuit breaker open due to repeated failures",
+            }
+
         run_id = f"{agent_id}-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{os.urandom(2).hex()}"
         logger.info(f"[{run_id}] Starting {config['name']} (attempt {retry_count + 1})")
 
@@ -436,13 +577,13 @@ class SentinelExecutor:
             if manual_params:
                 env["SENTINEL_INPUT_PARAMS"] = json.dumps(manual_params)
 
-            # Fetch enrichment data for this agent
+            # Fetch enrichment data
             enrichment = await APIEnrichment.enrich_for_agent(
                 agent_id, context=manual_params or {}
             )
             if enrichment:
                 env["SENTINEL_ENRICHMENT"] = json.dumps(enrichment)
-                logger.info(f"[{run_id}] Enrichment fetched: {list(enrichment.keys())}")
+                logger.info(f"[{run_id}] Enrichment: {list(enrichment.keys())}")
 
             logger.info(f"[{run_id}] Exec: {' '.join(cmd)}")
             process = await asyncio.create_subprocess_exec(
@@ -461,8 +602,6 @@ class SentinelExecutor:
             outputs = SentinelExecutor._extract_outputs(stdout_text)
 
             status = "success" if exit_code == 0 else "failed"
-            if exit_code != 0:
-                logger.error(f"[{run_id}] Exit code {exit_code}")
 
             result = {
                 "run_id": run_id,
@@ -489,26 +628,24 @@ class SentinelExecutor:
 
             logger.info(f"[{run_id}] {status} ({elapsed:.1f}s)")
 
-            # ─── Retry on failure ─────────────────────
-            if status == "failed" and retry_count < RETRY_CONFIG["max_retries"]:
-                delay = min(
-                    RETRY_CONFIG["base_delay_seconds"] * (RETRY_CONFIG["backoff_multiplier"] ** retry_count),
-                    RETRY_CONFIG["max_delay_seconds"],
-                )
-                logger.info(f"[{run_id}] Retrying in {delay:.1f}s (attempt {retry_count + 2}/{RETRY_CONFIG['max_retries'] + 1})")
-                await asyncio.sleep(delay)
-                return await SentinelExecutor.run_agent(
-                    agent_id, manual_params, triggered_by, retry_count + 1
-                )
-
-            # ─── Alert on final failure ─────────────────
-            if status == "failed" and retry_count >= RETRY_CONFIG["max_retries"]:
-                logger.error(f"[{run_id}] Max retries exceeded for {agent_id}")
-                await SentinelAlert.send(agent_id, result, is_retry=False)
-
-            # ─── Route on success ─────────────────────
             if status == "success":
+                CircuitBreaker.record_success(agent_id)
                 await SentinelRouter.route(agent_id, result)
+            else:
+                CircuitBreaker.record_failure(agent_id)
+                if retry_count < RETRY_CONFIG["max_retries"]:
+                    delay = min(
+                        RETRY_CONFIG["base_delay_seconds"] * (RETRY_CONFIG["backoff_multiplier"] ** retry_count),
+                        RETRY_CONFIG["max_delay_seconds"],
+                    )
+                    logger.info(f"[{run_id}] Retry in {delay:.1f}s ({retry_count + 2}/{RETRY_CONFIG['max_retries'] + 1})")
+                    await asyncio.sleep(delay)
+                    return await SentinelExecutor.run_agent(
+                        agent_id, manual_params, triggered_by, retry_count + 1
+                    )
+                else:
+                    logger.error(f"[{run_id}] Max retries exceeded")
+                    await SentinelAlert.send(agent_id, result)
 
             return result
 
@@ -535,7 +672,8 @@ class SentinelExecutor:
             state.set_agent_state(agent_id, agent_state)
             state.record_run(agent_id, result)
 
-            # Retry on exception too
+            CircuitBreaker.record_failure(agent_id)
+
             if retry_count < RETRY_CONFIG["max_retries"]:
                 delay = min(
                     RETRY_CONFIG["base_delay_seconds"] * (RETRY_CONFIG["backoff_multiplier"] ** retry_count),
@@ -547,8 +685,7 @@ class SentinelExecutor:
                     agent_id, manual_params, triggered_by, retry_count + 1
                 )
 
-            # Final failure alert
-            await SentinelAlert.send(agent_id, result, is_retry=False)
+            await SentinelAlert.send(agent_id, result)
             return result
 
     @staticmethod
@@ -631,9 +768,8 @@ class APIEnrichment:
 
     @staticmethod
     async def _fetch_json(url: str, timeout: int = 15) -> Optional[Dict]:
-        import urllib.request
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Sentinel/1.1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "Sentinel/1.2.0"})
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return json.loads(resp.read())
         except Exception as e:
@@ -646,7 +782,6 @@ class APIEnrichment:
         api_key = os.environ.get("NEWS_API_KEY", "")
         if not api_key:
             return []
-        import urllib.parse
         url = f"https://newsapi.org/v2/everything?q={urllib.parse.quote(query)}&sortBy=relevancy&pageSize=5&apiKey={api_key}"
         data = await APIEnrichment._fetch_json(url)
         return data.get("articles", []) if data else []
@@ -699,7 +834,6 @@ class APIEnrichment:
     @staticmethod
     async def fetch_dad_joke() -> Dict:
         """Fetch random dad joke for social content (no auth)."""
-        import urllib.request
         req = urllib.request.Request("https://icanhazdadjoke.com/", headers={"Accept": "application/json"})
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -716,7 +850,6 @@ class APIEnrichment:
     @staticmethod
     async def fetch_weather(city: str) -> Dict:
         """Fetch weather for location-based content (no auth)."""
-        import urllib.parse
         return await APIEnrichment._fetch_json(
             f"https://wttr.in/{urllib.parse.quote(city)}?format=j1", timeout=10
         ) or {}
@@ -726,30 +859,25 @@ class APIEnrichment:
         """Fetch relevant enrichment data for a specific agent."""
         context = context or {}
         results = {}
-
         if agent_id == "seo":
             query = context.get("topic", "technology")
             results["news"] = await APIEnrichment.fetch_news(query)
             results["reddit"] = await APIEnrichment.fetch_reddit_trends("technology")
             results["hackernews"] = await APIEnrichment.fetch_hackernews_top()
-
         elif agent_id == "social":
             results["quote"] = await APIEnrichment.fetch_quote()
             results["joke"] = await APIEnrichment.fetch_dad_joke()
             results["reddit"] = await APIEnrichment.fetch_reddit_trends("funny")
-
         elif agent_id == "media_buyer":
             results["crypto"] = await APIEnrichment.fetch_crypto_prices()
-
         elif agent_id == "email":
             results["quote"] = await APIEnrichment.fetch_quote()
             results["weather"] = await APIEnrichment.fetch_weather(context.get("city", "London"))
-
         return results
 
 
 # ═══════════════════════════════════════════════════
-# Flask API
+# Flask API (with Dashboard HTML)
 # ═══════════════════════════════════════════════════
 
 try:
@@ -758,10 +886,117 @@ try:
 except ImportError:
     api_app = None
 
+DASHBOARD_HTML = """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Sentinel Dashboard</title>
+    <style>
+        :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; --success: #238636; --fail: #da3633; --running: #1f6feb; --pending: #8b949e; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 2rem; }
+        h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+        .meta { color: #8b949e; margin-bottom: 2rem; font-size: 0.9rem; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+        .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
+        .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+        .agent-name { font-weight: 600; font-size: 1.1rem; }
+        .status { padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 500; text-transform: uppercase; }
+        .status.success { background: rgba(35,134,54,0.2); color: #3fb950; }
+        .status.failed { background: rgba(218,54,51,0.2); color: #f85149; }
+        .status.running { background: rgba(31,111,235,0.2); color: #58a6ff; }
+        .status.pending { background: rgba(139,148,158,0.2); color: #8b949e; }
+        .status.circuit_open { background: rgba(210,153,34,0.2); color: #d29922; }
+        .detail { font-size: 0.85rem; color: #8b949e; margin-top: 0.5rem; line-height: 1.5; }
+        .detail strong { color: var(--text); }
+        .history { margin-top: 0.75rem; font-size: 0.8rem; }
+        .history-item { display: flex; justify-content: space-between; padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+        .history-item:last-child { border-bottom: none; }
+        .chain-list { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+        .chain-item { font-size: 0.85rem; color: #8b949e; padding: 0.25rem 0; }
+        .refresh { position: fixed; top: 1rem; right: 1rem; background: var(--card); border: 1px solid var(--border); padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.85rem; color: var(--text); }
+        .error-banner { background: rgba(218,54,51,0.1); border: 1px solid rgba(218,54,51,0.3); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+        .ok-banner { background: rgba(35,134,54,0.1); border: 1px solid rgba(35,134,54,0.3); padding: 1rem; border-radius: 8px; margin-bottom: 1rem; }
+    </style>
+</head>
+<body>
+    <h1>🛡️ Sentinel Dashboard</h1>
+    <p class="meta">v1.2.0 • Auto-refresh every 30s</p>
+    <div id="content">Loading...</div>
+    <div class="refresh">Last updated: <span id="ts">--</span></div>
+
+    <script>
+    async function load() {
+        try {
+            const [status, history] = await Promise.all([
+                fetch('/api/sentinel/status').then(r => r.json()),
+                fetch('/api/sentinel/runs/history?limit=20').then(r => r.json())
+            ]);
+            render(status, history);
+        } catch(e) {
+            document.getElementById('content').innerHTML = '<div class="error-banner">Failed to load: ' + e.message + '</div>';
+        }
+        document.getElementById('ts').textContent = new Date().toLocaleTimeString();
+    }
+
+    function render(status, history) {
+        const failures = status.agents.filter(a => a.status === 'failed' || a.status === 'circuit_open').length;
+        let banner = failures > 0
+            ? `<div class="error-banner">⚠️ ${failures} agent(s) need attention</div>`
+            : `<div class="ok-banner">✅ All agents operational</div>`;
+
+        let html = banner + '<div class="grid">';
+        status.agents.forEach(a => {
+            const runs = history.runs.filter(r => r.agent_id === a.id).slice(0, 5);
+            let runsHtml = runs.map(r => {
+                const emoji = r.status === 'success' ? '✅' : '❌';
+                return `<div class="history-item"><span>${emoji} ${r.started_at?.slice(11,16)}</span><span>${r.elapsed_seconds}s</span></div>`;
+            }).join('');
+
+            let outputs = a.last_outputs && Object.keys(a.last_outputs).length > 0
+                ? '<br><strong>Last outputs:</strong> ' + JSON.stringify(a.last_outputs).slice(0, 120)
+                : '';
+
+            html += `
+                <div class="card">
+                    <div class="card-header">
+                        <span class="agent-name">${a.name}</span>
+                        <span class="status ${a.status}">${a.status}</span>
+                    </div>
+                    <div class="detail">
+                        <strong>Role:</strong> ${a.role}<br>
+                        <strong>Last run:</strong> ${a.last_run_at ? a.last_run_at.slice(0,16).replace('T',' ') : 'never'}<br>
+                        <strong>Duration:</strong> ${a.last_run_duration ?? '--'}s
+                        ${a.retry_count ? `<br><strong>Retries:</strong> ${a.retry_count}` : ''}
+                        ${outputs}
+                    </div>
+                    <div class="history">${runsHtml || '<span style="color:#555">No recent runs</span>'}</div>
+                </div>
+            `;
+        });
+        html += '</div>';
+
+        if (status.chains && status.chains.length) {
+            html += `<div class="card chain-list"><div class="agent-name">🔗 Dependency Chains</div>`;
+            status.chains.forEach(c => html += `<div class="chain-item">${c}</div>`);
+            html += '</div>';
+        }
+
+        document.getElementById('content').innerHTML = html;
+    }
+
+    load();
+    setInterval(load, 30000);
+    </script>
+</body>
+</html>
+"""
+
 if api_app:
     @api_app.route("/api/sentinel/health", methods=["GET"])
     def health():
-        return jsonify({"status": "healthy", "version": "1.1.0", "timestamp": datetime.utcnow().isoformat()})
+        return jsonify({"status": "healthy", "version": "1.2.0", "timestamp": datetime.utcnow().isoformat()})
 
     @api_app.route("/api/sentinel/agents", methods=["GET"])
     def list_agents():
@@ -779,6 +1014,8 @@ if api_app:
                 "last_run_id": agent_state.get("last_run_id"),
                 "last_outputs": agent_state.get("last_outputs", {}),
                 "retry_count": agent_state.get("retry_count", 0),
+                "circuit_open": agent_state.get("circuit_open", False),
+                "failure_count": agent_state.get("failure_count", 0),
             })
         return jsonify({"agents": agents})
 
@@ -826,10 +1063,11 @@ if api_app:
                 "last_outputs": agent_state.get("last_outputs", {}),
                 "current_run_id": agent_state.get("current_run_id"),
                 "retry_count": agent_state.get("retry_count", 0),
+                "circuit_open": agent_state.get("circuit_open", False),
             })
         return jsonify({
             "orchestrator": "Sentinel",
-            "version": "1.1.0",
+            "version": "1.2.0",
             "timestamp": datetime.utcnow().isoformat(),
             "agents": agents_status,
             "chains": list(CHAINS_CONFIG.keys()),
@@ -841,8 +1079,20 @@ if api_app:
     def get_config():
         return jsonify({
             "retry": RETRY_CONFIG,
-            "alerts": {k: v for k, v in ALERT_CONFIG.items() if k != "slack_webhook_url"},
+            "alerts": {k: v for k, v in ALERT_CONFIG.items() if "token" not in k and "webhook" not in k},
+            "circuit_breaker": CIRCUIT_CONFIG,
         })
+
+    @api_app.route("/dashboard", methods=["GET"])
+    def dashboard():
+        from flask import Response
+        return Response(DASHBOARD_HTML, mimetype="text/html")
+
+    @api_app.route("/api/sentinel/digest/trigger", methods=["POST"])
+    def trigger_digest():
+        """Manual trigger for daily digest (for testing)."""
+        asyncio.create_task(SentinelAlert.send_digest())
+        return jsonify({"status": "digest_triggered"})
 
 
 # ═══════════════════════════════════════════════════
@@ -850,7 +1100,7 @@ if api_app:
 # ═══════════════════════════════════════════════════
 
 async def main():
-    parser = argparse.ArgumentParser(description="Sentinel — AI Agency Orchestrator v1.1.0")
+    parser = argparse.ArgumentParser(description="Sentinel — AI Agency Orchestrator v1.2.0")
     parser.add_argument("--config", help="Path to config dir", default=str(CONFIG_DIR))
     subparsers = parser.add_subparsers(dest="command")
 
@@ -865,6 +1115,8 @@ async def main():
     api_parser = subparsers.add_parser("api", help="Start API server")
     api_parser.add_argument("--host", default="0.0.0.0")
     api_parser.add_argument("--port", type=int, default=9092)
+
+    digest_parser = subparsers.add_parser("digest", help="Send daily digest now")
 
     args = parser.parse_args()
 
@@ -890,6 +1142,9 @@ async def main():
             logger.error("Flask not installed: pip install flask")
             sys.exit(1)
         api_app.run(host=args.host, port=args.port, threaded=True)
+
+    elif args.command == "digest":
+        await SentinelAlert.send_digest()
 
     else:
         parser.print_help()
