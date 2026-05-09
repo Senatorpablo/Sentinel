@@ -436,6 +436,14 @@ class SentinelExecutor:
             if manual_params:
                 env["SENTINEL_INPUT_PARAMS"] = json.dumps(manual_params)
 
+            # Fetch enrichment data for this agent
+            enrichment = await APIEnrichment.enrich_for_agent(
+                agent_id, context=manual_params or {}
+            )
+            if enrichment:
+                env["SENTINEL_ENRICHMENT"] = json.dumps(enrichment)
+                logger.info(f"[{run_id}] Enrichment fetched: {list(enrichment.keys())}")
+
             logger.info(f"[{run_id}] Exec: {' '.join(cmd)}")
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -622,50 +630,122 @@ class APIEnrichment:
     """Fetches real data from public APIs for agent enrichment."""
 
     @staticmethod
-    async def fetch_news(query: str, api_key: str = "") -> List[Dict]:
-        """Fetch news articles for SEO/content inspiration."""
-        if not api_key:
-            return []
+    async def _fetch_json(url: str, timeout: int = 15) -> Optional[Dict]:
         import urllib.request
-        import json as _json
-        url = f"https://newsapi.org/v2/everything?q={urllib.parse.quote(query)}&sortBy=relevancy&pageSize=5&apiKey={api_key}"
         try:
-            with urllib.request.urlopen(url, timeout=15) as resp:
-                data = _json.loads(resp.read())
-                return data.get("articles", [])
+            req = urllib.request.Request(url, headers={"User-Agent": "Sentinel/1.1.0"})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
         except Exception as e:
-            logger.warning(f"NewsAPI fetch failed: {e}")
-            return []
+            logger.warning(f"API fetch failed ({url[:60]}...): {e}")
+            return None
 
     @staticmethod
-    async def fetch_trending_searches(geo: str = "US") -> List[str]:
-        """Fetch trending Google searches (requires SerpAPI or similar)."""
-        return []  # Placeholder — requires paid API
+    async def fetch_news(query: str) -> List[Dict]:
+        """Fetch news articles for SEO/content inspiration."""
+        api_key = os.environ.get("NEWS_API_KEY", "")
+        if not api_key:
+            return []
+        import urllib.parse
+        url = f"https://newsapi.org/v2/everything?q={urllib.parse.quote(query)}&sortBy=relevancy&pageSize=5&apiKey={api_key}"
+        data = await APIEnrichment._fetch_json(url)
+        return data.get("articles", []) if data else []
+
+    @staticmethod
+    async def fetch_reddit_trends(subreddit: str = "technology") -> List[Dict]:
+        """Fetch trending Reddit posts (no auth)."""
+        url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit=5"
+        data = await APIEnrichment._fetch_json(url, timeout=10)
+        if not data or "data" not in data:
+            return []
+        posts = []
+        for child in data["data"].get("children", []):
+            p = child.get("data", {})
+            posts.append({
+                "title": p.get("title", ""),
+                "url": f"https://reddit.com{p.get('permalink', '')}",
+                "score": p.get("score", 0),
+                "subreddit": p.get("subreddit", ""),
+            })
+        return posts
+
+    @staticmethod
+    async def fetch_hackernews_top() -> List[Dict]:
+        """Fetch top HackerNews stories (no auth)."""
+        ids_data = await APIEnrichment._fetch_json("https://hacker-news.firebaseio.com/v0/topstories.json", timeout=10)
+        if not ids_data or not isinstance(ids_data, list):
+            return []
+        stories = []
+        for story_id in ids_data[:5]:
+            story = await APIEnrichment._fetch_json(
+                f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json", timeout=10
+            )
+            if story:
+                stories.append({
+                    "title": story.get("title", ""),
+                    "url": story.get("url", f"https://news.ycombinator.com/item?id={story_id}"),
+                    "score": story.get("score", 0),
+                })
+        return stories
+
+    @staticmethod
+    async def fetch_crypto_prices() -> Dict:
+        """Fetch top crypto prices (no auth)."""
+        data = await APIEnrichment._fetch_json(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd,gbp", timeout=10
+        )
+        return data or {}
+
+    @staticmethod
+    async def fetch_dad_joke() -> Dict:
+        """Fetch random dad joke for social content (no auth)."""
+        import urllib.request
+        req = urllib.request.Request("https://icanhazdadjoke.com/", headers={"Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read())
+        except Exception as e:
+            logger.warning(f"Dad joke fetch failed: {e}")
+            return {}
+
+    @staticmethod
+    async def fetch_quote() -> Dict:
+        """Fetch inspirational quote for social content (no auth)."""
+        return await APIEnrichment._fetch_json("https://api.quotable.io/random", timeout=10) or {}
 
     @staticmethod
     async def fetch_weather(city: str) -> Dict:
-        """Fetch weather for location-based content."""
-        import urllib.request
-        import json as _json
-        url = f"https://wttr.in/{city}?format=j1"
-        try:
-            with urllib.request.urlopen(url, timeout=10) as resp:
-                return _json.loads(resp.read())
-        except Exception as e:
-            logger.warning(f"Weather fetch failed: {e}")
-            return {}
+        """Fetch weather for location-based content (no auth)."""
+        import urllib.parse
+        return await APIEnrichment._fetch_json(
+            f"https://wttr.in/{urllib.parse.quote(city)}?format=j1", timeout=10
+        ) or {}
 
     @staticmethod
-    async def fetch_random_quote() -> Dict:
-        """Fetch inspirational quote for social content."""
-        import urllib.request
-        import json as _json
-        try:
-            with urllib.request.urlopen("https://api.quotable.io/random", timeout=10) as resp:
-                return _json.loads(resp.read())
-        except Exception as e:
-            logger.warning(f"Quote fetch failed: {e}")
-            return {}
+    async def enrich_for_agent(agent_id: str, context: Dict = None) -> Dict:
+        """Fetch relevant enrichment data for a specific agent."""
+        context = context or {}
+        results = {}
+
+        if agent_id == "seo":
+            query = context.get("topic", "technology")
+            results["news"] = await APIEnrichment.fetch_news(query)
+            results["reddit"] = await APIEnrichment.fetch_reddit_trends("technology")
+            results["hackernews"] = await APIEnrichment.fetch_hackernews_top()
+
+        elif agent_id == "social":
+            results["quote"] = await APIEnrichment.fetch_quote()
+            results["joke"] = await APIEnrichment.fetch_dad_joke()
+            results["reddit"] = await APIEnrichment.fetch_reddit_trends("funny")
+
+        elif agent_id == "media_buyer":
+            results["crypto"] = await APIEnrichment.fetch_crypto_prices()
+
+        elif agent_id == "email":
+            results["quote"] = await APIEnrichment.fetch_quote()
+            results["weather"] = await APIEnrichment.fetch_weather(context.get("city", "London"))
+
+        return results
 
 
 # ═══════════════════════════════════════════════════
