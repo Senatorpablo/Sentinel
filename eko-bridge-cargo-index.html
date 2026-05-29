@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eko Bridge Cargo — Shipping between the UK & Nigeria</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0d1f1a;          /* deep forest ink */
+    --ink-2:#13302a;
+    --cream:#f4efe2;        /* warm paper */
+    --cream-2:#ece3cf;
+    --green:#0f8b54;        /* naija green */
+    --green-bright:#19c074;
+    --gold:#e9a93c;         /* warm amber */
+    --gold-deep:#c8821a;
+    --rust:#c2502b;
+    --line:rgba(244,239,226,.14);
+    --shadow:0 30px 60px -20px rgba(0,0,0,.45);
+    --r:18px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:'Hanken Grotesk',sans-serif;
+    background:var(--ink);
+    color:var(--cream);
+    line-height:1.55;
+    overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,.display{font-family:'Bricolage Grotesque',sans-serif;line-height:1.02;letter-spacing:-.02em;font-weight:800}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px}
+  a{color:inherit;text-decoration:none}
+  section{position:relative}
+
+  /* grain overlay */
+  body::after{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ---------- NAV ---------- */
+  nav{position:sticky;top:0;z-index:100;backdrop-filter:blur(14px);
+      background:rgba(13,31,26,.72);border-bottom:1px solid var(--line)}
+  .nav-in{display:flex;align-items:center;justify-content:space-between;height:70px}
+  .logo{display:flex;align-items:center;gap:11px;font-family:'Bricolage Grotesque';font-weight:800;font-size:1.2rem}
+  .logo .mark{width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,var(--green-bright),var(--gold));
+    display:grid;place-items:center;position:relative;overflow:hidden}
+  .logo .mark::before{content:"⇄";color:var(--ink);font-size:1.1rem;font-weight:800}
+  .nav-links{display:flex;gap:30px;align-items:center;font-size:.94rem;font-weight:500}
+  .nav-links a{opacity:.82;transition:opacity .2s}
+  .nav-links a:hover{opacity:1}
+  .btn{display:inline-flex;align-items:center;gap:8px;font-weight:600;font-size:.94rem;
+    padding:11px 20px;border-radius:100px;cursor:pointer;border:none;transition:transform .15s,box-shadow .2s;font-family:inherit}
+  .btn-primary{background:var(--gold);color:var(--ink)}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 12px 24px -8px var(--gold-deep)}
+  .btn-ghost{background:transparent;color:var(--cream);border:1px solid var(--line)}
+  .btn-ghost:hover{background:rgba(244,239,226,.06)}
+  @media(max-width:860px){.nav-links a:not(.btn){display:none}}
+
+  /* ---------- HERO ---------- */
+  .hero{padding:90px 0 70px;position:relative}
+  .hero::before{content:"";position:absolute;top:-200px;right:-200px;width:680px;height:680px;
+    background:radial-gradient(circle,rgba(25,192,116,.20),transparent 60%);filter:blur(20px);pointer-events:none}
+  .hero::after{content:"";position:absolute;bottom:-160px;left:-160px;width:520px;height:520px;
+    background:radial-gradient(circle,rgba(233,169,60,.16),transparent 60%);filter:blur(20px);pointer-events:none}
+  .eyebrow{display:inline-flex;align-items:center;gap:9px;font-size:.82rem;font-weight:600;letter-spacing:.04em;
+    text-transform:uppercase;color:var(--gold);border:1px solid var(--line);padding:7px 15px;border-radius:100px;
+    background:rgba(244,239,226,.03);margin-bottom:26px}
+  .eyebrow .dot{width:7px;height:7px;border-radius:50%;background:var(--green-bright);box-shadow:0 0 0 4px rgba(25,192,116,.2)}
+  .hero h1{font-size:clamp(2.6rem,7vw,5.2rem);max-width:14ch}
+  .hero h1 .hl{color:var(--gold);position:relative;white-space:nowrap}
+  .hero p.lead{font-size:clamp(1.05rem,2vw,1.32rem);max-width:48ch;margin:26px 0 34px;opacity:.85;font-weight:400}
+  .hero-cta{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+  .hero-stats{display:flex;gap:38px;margin-top:54px;flex-wrap:wrap}
+  .stat .n{font-family:'Bricolage Grotesque';font-size:2rem;font-weight:800;color:var(--green-bright)}
+  .stat .l{font-size:.86rem;opacity:.7}
+  .reveal{opacity:0;transform:translateY(26px);animation:rise .9s cubic-bezier(.2,.7,.2,1) forwards}
+  @keyframes rise{to{opacity:1;transform:none}}
+  .d1{animation-delay:.05s}.d2{animation-delay:.18s}.d3{animation-delay:.31s}.d4{animation-delay:.44s}.d5{animation-delay:.57s}
+
+  /* route ribbon */
+  .ribbon{margin-top:60px;border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+    padding:18px 0;overflow:hidden;white-space:nowrap;-webkit-mask-image:linear-gradient(90deg,transparent,#000 12%,#000 88%,transparent)}
+  .ribbon .track{display:inline-flex;gap:48px;animation:scroll 30s linear infinite;font-family:'Bricolage Grotesque';
+    font-weight:600;font-size:1.05rem;opacity:.55}
+  .ribbon .track span{display:inline-flex;align-items:center;gap:48px}
+  @keyframes scroll{to{transform:translateX(-50%)}}
+
+  /* ---------- QUOTE CALCULATOR ---------- */
+  .quote{padding:80px 0}
+  .quote-card{background:var(--cream);color:var(--ink);border-radius:28px;padding:clamp(26px,4vw,46px);
+    box-shadow:var(--shadow);display:grid;grid-template-columns:1.1fr .9fr;gap:42px}
+  @media(max-width:840px){.quote-card{grid-template-columns:1fr;gap:30px}}
+  .quote h2{font-size:clamp(1.8rem,4vw,2.6rem);color:var(--ink)}
+  .quote .sub{opacity:.66;margin-top:10px;font-size:1rem;max-width:40ch}
+  .field{margin-top:22px}
+  .field>label{display:block;font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+    opacity:.6;margin-bottom:9px}
+  .seg{display:flex;gap:8px;background:var(--cream-2);padding:6px;border-radius:14px}
+  .seg button{flex:1;border:none;background:transparent;padding:11px 8px;border-radius:9px;cursor:pointer;
+    font-family:inherit;font-weight:600;font-size:.92rem;color:var(--ink);opacity:.6;transition:.18s}
+  .seg button.on{background:var(--ink);color:var(--cream);opacity:1;box-shadow:0 6px 14px -6px rgba(0,0,0,.4)}
+  .row{display:flex;gap:14px}.row>*{flex:1}
+  input,select{width:100%;padding:13px 15px;border-radius:12px;border:1.5px solid rgba(13,31,26,.14);
+    background:#fff;font-family:inherit;font-size:1rem;color:var(--ink);transition:border .18s}
+  input:focus,select:focus{outline:none;border-color:var(--green)}
+  .weight-wrap{position:relative}
+  .weight-wrap span{position:absolute;right:15px;top:50%;transform:translateY(-50%);opacity:.45;font-weight:600}
+  /* result panel */
+  .result{background:var(--ink);border-radius:22px;padding:30px;display:flex;flex-direction:column;justify-content:space-between}
+  .result .tag{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--gold);font-weight:700}
+  .result .big{font-family:'Bricolage Grotesque';font-size:3.4rem;font-weight:800;color:var(--cream);margin:6px 0 2px;line-height:1}
+  .result .big small{font-size:1rem;opacity:.6;font-weight:500}
+  .result .est{font-size:.85rem;opacity:.6;color:var(--cream)}
+  .breakdown{margin:22px 0;border-top:1px solid var(--line);padding-top:16px}
+  .breakdown div{display:flex;justify-content:space-between;font-size:.92rem;color:var(--cream);opacity:.85;padding:6px 0}
+  .breakdown div b{font-weight:700;opacity:1}
+  .result .note{font-size:.78rem;opacity:.5;color:var(--cream);margin-top:6px;line-height:1.45}
+  .eta{display:inline-flex;align-items:center;gap:7px;background:rgba(25,192,116,.14);color:var(--green-bright);
+    padding:6px 13px;border-radius:100px;font-size:.84rem;font-weight:600;margin-top:14px;align-self:flex-start}
+
+  /* ---------- SECTION HEADINGS ---------- */
+  .sec-head{max-width:60ch;margin-bottom:48px}
+  .sec-head .kicker{color:var(--green-bright);font-weight:700;font-size:.85rem;letter-spacing:.05em;
+    text-transform:uppercase;margin-bottom:14px;display:block}
+  .sec-head h2{font-size:clamp(2rem,4.5vw,3.2rem)}
+  .sec-head p{opacity:.72;margin-top:16px;font-size:1.08rem}
+
+  /* ---------- SERVICES ---------- */
+  .services{padding:90px 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:20px}
+  .card{background:var(--ink-2);border:1px solid var(--line);border-radius:var(--r);padding:30px;
+    transition:transform .25s,border-color .25s;position:relative;overflow:hidden}
+  .card:hover{transform:translateY(-6px);border-color:rgba(233,169,60,.4)}
+  .card .ic{width:50px;height:50px;border-radius:13px;display:grid;place-items:center;font-size:1.5rem;
+    background:linear-gradient(135deg,rgba(25,192,116,.2),rgba(233,169,60,.18));margin-bottom:20px}
+  .card h3{font-size:1.3rem;margin-bottom:10px}
+  .card p{opacity:.74;font-size:.96rem}
+  .card .price{margin-top:16px;font-family:'Bricolage Grotesque';font-weight:700;color:var(--gold);font-size:1.05rem}
+
+  /* ---------- STEPS ---------- */
+  .steps{padding:90px 0;background:var(--ink-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .step-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:28px;counter-reset:s}
+  .step{position:relative;padding-top:18px}
+  .step::before{counter-increment:s;content:"0" counter(s);font-family:'Bricolage Grotesque';font-weight:800;
+    font-size:2.4rem;color:transparent;-webkit-text-stroke:1.5px var(--gold);opacity:.85;display:block;margin-bottom:12px}
+  .step h3{font-size:1.18rem;margin-bottom:8px}
+  .step p{opacity:.72;font-size:.94rem}
+
+  /* ---------- PRICING ---------- */
+  .pricing{padding:90px 0}
+  .ptable{border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+  .ptable .prow{display:grid;grid-template-columns:2fr 1fr 1fr 1.4fr;align-items:center;padding:18px 24px;
+    border-bottom:1px solid var(--line);font-size:.96rem}
+  .ptable .prow:last-child{border-bottom:none}
+  .ptable .phead{background:var(--ink-2);font-family:'Bricolage Grotesque';font-weight:700;font-size:.82rem;
+    text-transform:uppercase;letter-spacing:.04em;opacity:.7}
+  .ptable .prow .svc{font-weight:600}
+  .ptable .prow .pp{font-family:'Bricolage Grotesque';font-weight:700;color:var(--gold)}
+  @media(max-width:720px){
+    .ptable .prow{grid-template-columns:1fr 1fr;gap:6px 14px}
+    .ptable .phead{display:none}
+    .ptable .prow .svc{grid-column:1/-1;font-size:1.05rem;color:var(--green-bright)}
+  }
+
+  /* ---------- ROUTES ---------- */
+  .routes{padding:90px 0;background:var(--ink-2);border-top:1px solid var(--line)}
+  .route-cols{display:grid;grid-template-columns:1fr auto 1fr;gap:30px;align-items:start}
+  @media(max-width:760px){.route-cols{grid-template-columns:1fr}.route-mid{display:none}}
+  .route-box h3{color:var(--gold);font-size:1.05rem;margin-bottom:18px;letter-spacing:.02em}
+  .chips{display:flex;flex-wrap:wrap;gap:10px}
+  .chip{padding:9px 16px;border:1px solid var(--line);border-radius:100px;font-size:.9rem;background:rgba(244,239,226,.03)}
+  .route-mid{font-size:2.4rem;color:var(--green-bright);align-self:center;padding-top:30px}
+
+  /* ---------- TRACK ---------- */
+  .track{padding:80px 0}
+  .track-box{background:linear-gradient(135deg,var(--green),#0a6e42);border-radius:24px;padding:clamp(28px,4vw,46px);
+    display:flex;justify-content:space-between;align-items:center;gap:30px;flex-wrap:wrap}
+  .track-box h2{color:#fff;font-size:clamp(1.6rem,3.5vw,2.3rem);max-width:18ch}
+  .track-form{display:flex;gap:10px;flex-wrap:wrap}
+  .track-form input{min-width:230px;border:none;color:var(--ink)}
+  #trackMsg{flex-basis:100%;color:#fff;font-size:.92rem;opacity:.92;min-height:1.2em;font-weight:500}
+
+  /* ---------- FAQ ---------- */
+  .faq{padding:90px 0}
+  details{border-bottom:1px solid var(--line);padding:22px 0}
+  summary{cursor:pointer;font-family:'Bricolage Grotesque';font-weight:600;font-size:1.12rem;list-style:none;
+    display:flex;justify-content:space-between;align-items:center;gap:20px}
+  summary::-webkit-details-marker{display:none}
+  summary::after{content:"+";font-size:1.6rem;color:var(--gold);transition:transform .2s}
+  details[open] summary::after{transform:rotate(45deg)}
+  details p{opacity:.74;margin-top:14px;font-size:.98rem;max-width:75ch}
+
+  /* ---------- CONTACT / FOOTER ---------- */
+  footer{padding:80px 0 40px;background:var(--ink-2);border-top:1px solid var(--line)}
+  .foot-cta{display:grid;grid-template-columns:1.3fr 1fr;gap:40px;align-items:center;margin-bottom:60px}
+  @media(max-width:760px){.foot-cta{grid-template-columns:1fr}}
+  .foot-cta h2{font-size:clamp(2rem,5vw,3.2rem)}
+  .foot-cta p{opacity:.74;margin-top:14px}
+  .wa{background:#25D366;color:#073b1e}
+  .foot-bottom{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+    border-top:1px solid var(--line);padding-top:28px;font-size:.88rem;opacity:.6}
+  .foot-links{display:flex;gap:24px;flex-wrap:wrap}
+  .disclaimer{font-size:.8rem;opacity:.45;margin-top:14px;max-width:80ch;line-height:1.5}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="wrap nav-in">
+    <a href="#" class="logo"><span class="mark"></span>Eko Bridge <span style="color:var(--gold)">Cargo</span></a>
+    <div class="nav-links">
+      <a href="#services">Services</a>
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#routes">Routes</a>
+      <a href="#quote" class="btn btn-primary">Get a quote</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow reveal d1"><span class="dot"></span>London ⇄ Lagos · Air & Sea Freight</div>
+    <h1 class="reveal d2">Your cargo, <span class="hl">both ways</span>, between the UK & Nigeria.</h1>
+    <p class="lead reveal d3">We collect, consolidate, ship and clear — door to door. Send barrels, boxes, parcels, electronics and personal effects from the UK to Nigeria, and bring goods back the other way. Reliable, tracked, and priced by the kilo.</p>
+    <div class="hero-cta reveal d4">
+      <a href="#quote" class="btn btn-primary">Calculate my shipping →</a>
+      <a href="#how" class="btn btn-ghost">See how it works</a>
+    </div>
+    <div class="hero-stats reveal d5">
+      <div class="stat"><div class="n">5–7 days</div><div class="l">Air freight to Lagos</div></div>
+      <div class="stat"><div class="n">£3.50/kg</div><div class="l">Sea freight from</div></div>
+      <div class="stat"><div class="n">Door-to-door</div><div class="l">UK & Nigeria wide</div></div>
+    </div>
+  </div>
+  <div class="ribbon reveal d5">
+    <div class="track">
+      <span>London ✦ Lagos ✦ Abuja ✦ Manchester ✦ Port Harcourt ✦ Birmingham ✦ Ibadan ✦ Tilbury ✦ Tin Can ✦&nbsp;</span>
+      <span>London ✦ Lagos ✦ Abuja ✦ Manchester ✦ Port Harcourt ✦ Birmingham ✦ Ibadan ✦ Tilbury ✦ Tin Can ✦&nbsp;</span>
+    </div>
+  </div>
+</header>
+
+<!-- QUOTE CALCULATOR -->
+<section class="quote" id="quote">
+  <div class="wrap">
+    <div class="quote-card">
+      <div>
+        <span class="kicker" style="color:var(--green);font-weight:700;font-size:.85rem;letter-spacing:.05em;text-transform:uppercase">Instant estimate</span>
+        <h2>Work out your shipping cost</h2>
+        <p class="sub">Pick your route and mode, enter the weight, and get an instant estimate. No sign-up.</p>
+
+        <div class="field">
+          <label>Direction</label>
+          <div class="seg" id="dir">
+            <button data-v="uk2ng" class="on">UK → Nigeria</button>
+            <button data-v="ng2uk">Nigeria → UK</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Shipping mode</label>
+          <div class="seg" id="mode">
+            <button data-v="air" class="on">✈ Air freight</button>
+            <button data-v="sea">🚢 Sea freight</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>Delivery type</label>
+          <div class="seg" id="delivery">
+            <button data-v="warehouse" class="on">Warehouse pickup</button>
+            <button data-v="door">Door-to-door</button>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>Weight</label>
+            <div class="weight-wrap">
+              <input id="weight" type="number" min="1" value="20" inputmode="numeric">
+              <span>kg</span>
+            </div>
+          </div>
+          <div class="field">
+            <label>Destination city</label>
+            <select id="city">
+              <option>Lagos</option><option>Abuja</option><option>Port Harcourt</option>
+              <option>Ibadan</option><option>Benin City</option><option>Other city</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="result">
+        <div>
+          <div class="tag">Estimated total</div>
+          <div class="big" id="total">£125 <small></small></div>
+          <div class="est" id="rateLine">Air freight · £5.00/kg · warehouse pickup</div>
+          <div class="eta" id="eta">⏱ 5–7 working days</div>
+          <div class="breakdown" id="breakdown"></div>
+        </div>
+        <div>
+          <a href="#contact" class="btn btn-primary" style="width:100%;justify-content:center">Book this shipment</a>
+          <p class="note">Estimate only. Excludes Nigerian customs duty, VAT and any regulated-goods permits, which are quoted separately once your packing list is confirmed.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- SERVICES -->
+<section class="services" id="services">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="kicker">What we move</span>
+      <h2>One bridge, every kind of cargo.</h2>
+      <p>From a single box to a full pallet — we handle collection, consolidation, customs paperwork and final delivery on both sides.</p>
+    </div>
+    <div class="grid">
+      <div class="card"><div class="ic">✈</div><h3>Air Freight</h3><p>Fast, tracked door-to-door for time-sensitive goods, electronics and documents.</p><div class="price">from £5.00 / kg</div></div>
+      <div class="card"><div class="ic">🚢</div><h3>Sea Freight</h3><p>The economical choice for furniture, bulk goods and barrels. Groupage or by weight.</p><div class="price">from £3.50 / kg · £650 / CBM</div></div>
+      <div class="card"><div class="ic">🛢️</div><h3>Barrels & Boxes</h3><p>Drums, suitcases and packed boxes — the diaspora classic. We supply packing materials.</p><div class="price">flat-rate options</div></div>
+      <div class="card"><div class="ic">🏠</div><h3>Personal Effects</h3><p>Relocating? We ship household and personal belongings with full documentation.</p><div class="price">priced on packing list</div></div>
+      <div class="card"><div class="ic">📦</div><h3>Commercial Cargo</h3><p>For businesses importing stock — Form M, PAAR and SONCAP handled by our partners.</p><div class="price">trade rates</div></div>
+      <div class="card"><div class="ic">↩️</div><h3>Nigeria → UK</h3><p>Bring fashion, art, foodstuffs and goods back to the UK with full import clearance.</p><div class="price">from £4.00 / kg</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section class="steps" id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="kicker">Simple by design</span>
+      <h2>From your door to theirs in four steps.</h2>
+    </div>
+    <div class="step-grid">
+      <div class="step"><h3>Book & get a quote</h3><p>Tell us what you're sending and where. We confirm the rate and arrange collection or drop-off.</p></div>
+      <div class="step"><h3>We collect & pack</h3><p>We pick up across the UK (or you drop at our hub), weigh, label and consolidate your cargo.</p></div>
+      <div class="step"><h3>Ship & clear</h3><p>Goods fly or sail with our carrier partners. We handle export and import customs paperwork.</p></div>
+      <div class="step"><h3>Delivered & tracked</h3><p>Collect at our Lagos warehouse or take door-to-door delivery. Track the whole way.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section class="pricing" id="pricing">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="kicker">Transparent rates</span>
+      <h2>Honest, per-kilo pricing.</h2>
+      <p>Indicative published rates below. Final quotes depend on volume, dimensions and destination. A £25 handling fee applies per shipment.</p>
+    </div>
+    <div class="ptable">
+      <div class="prow phead"><div>Service</div><div>Speed</div><div>From</div><div>Notes</div></div>
+      <div class="prow"><div class="svc">Air freight → Lagos</div><div>5–7 days</div><div class="pp">£5.00/kg</div><div>Warehouse pickup. Min 5kg.</div></div>
+      <div class="prow"><div class="svc">Air freight → other cities</div><div>5–9 days</div><div class="pp">£5.00/kg +</div><div>+£2.50–£3.00/kg door delivery.</div></div>
+      <div class="prow"><div class="svc">Sea freight (by weight)</div><div>4–8 weeks</div><div class="pp">£3.50/kg</div><div>Best for heavy/bulky items.</div></div>
+      <div class="prow"><div class="svc">Sea freight (groupage)</div><div>4–8 weeks</div><div class="pp">£650/CBM</div><div>Shared container space.</div></div>
+      <div class="prow"><div class="svc">Nigeria → UK air</div><div>5–9 days</div><div class="pp">£6.00/kg</div><div>Import clearance included.</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ROUTES -->
+<section class="routes" id="routes">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="kicker">Coverage</span>
+      <h2>Where we collect & deliver.</h2>
+    </div>
+    <div class="route-cols">
+      <div class="route-box">
+        <h3>🇬🇧 UK collection</h3>
+        <div class="chips">
+          <span class="chip">London</span><span class="chip">Birmingham</span><span class="chip">Manchester</span>
+          <span class="chip">Leeds</span><span class="chip">Liverpool</span><span class="chip">Bristol</span>
+          <span class="chip">Croydon hub</span><span class="chip">Nationwide courier</span>
+        </div>
+      </div>
+      <div class="route-mid">⇄</div>
+      <div class="route-box">
+        <h3>🇳🇬 Nigeria delivery</h3>
+        <div class="chips">
+          <span class="chip">Lagos</span><span class="chip">Abuja</span><span class="chip">Port Harcourt</span>
+          <span class="chip">Ibadan</span><span class="chip">Benin City</span><span class="chip">Enugu</span>
+          <span class="chip">Kano</span><span class="chip">Door-to-door</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TRACK -->
+<section class="track">
+  <div class="wrap">
+    <div class="track-box">
+      <h2>Track your shipment in real time.</h2>
+      <div class="track-form">
+        <input id="trackInput" type="text" placeholder="Enter tracking number e.g. EBC-29481">
+        <button class="btn btn-primary" onclick="trackIt()">Track</button>
+        <div id="trackMsg"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="faq">
+  <div class="wrap">
+    <div class="sec-head">
+      <span class="kicker">Good to know</span>
+      <h2>Questions, answered.</h2>
+    </div>
+    <details open><summary>How is my shipping cost calculated?</summary><p>Air freight is charged by the greater of actual weight or volumetric weight (length × width × height in cm ÷ 6000). Sea freight is charged by weight or by cubic metre (CBM) for groupage. Use the calculator above for an instant estimate.</p></details>
+    <details><summary>Who pays Nigerian customs duty?</summary><p>Import duty, VAT and any regulated-goods permits (NAFDAC, SONCAP) are separate from freight and are the consignee's responsibility. For commercial cargo we help arrange Form M, PAAR and clearance through our licensed clearing partners in Nigeria.</p></details>
+    <details><summary>What can't I ship?</summary><p>Nigeria's import prohibition list bans certain goods, and used vehicles over 12 years old are not permitted. Hazardous materials, cash and counterfeit goods are never accepted. Ask us before booking if you're unsure.</p></details>
+    <details><summary>Do you collect from my home?</summary><p>Yes — we offer nationwide UK collection, or you can drop off at our hub. In Nigeria we offer warehouse collection or door-to-door delivery to most major cities.</p></details>
+    <details><summary>How do I pay?</summary><p>Bank transfer or card once your quote is confirmed and goods are weighed. You'll receive a tracking number and updates throughout the journey.</p></details>
+  </div>
+</section>
+
+<!-- CONTACT / FOOTER -->
+<footer id="contact">
+  <div class="wrap">
+    <div class="foot-cta">
+      <div>
+        <h2>Ready to ship?</h2>
+        <p>Send us your packing list and pickup location — we'll come back with a firm quote within the hour during business hours.</p>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <a href="https://wa.me/447000000000" target="_blank" rel="noopener" class="btn wa" style="justify-content:center;padding:15px">💬 Chat on WhatsApp</a>
+        <a href="mailto:hello@ekobridgecargo.co.uk" class="btn btn-ghost" style="justify-content:center;padding:15px">✉ hello@ekobridgecargo.co.uk</a>
+        <a href="tel:+447000000000" class="btn btn-ghost" style="justify-content:center;padding:15px">📞 +44 7000 000 000</a>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <div>
+        <div class="logo" style="font-size:1.05rem;margin-bottom:8px"><span class="mark"></span>Eko Bridge Cargo</div>
+        © 2026 Eko Bridge Cargo Ltd · Registered in England & Wales · BIFA member (pending)
+        <div class="disclaimer">Rates shown are indicative and exclude customs duties, taxes and regulated-goods permits. Eko Bridge Cargo operates as a freight forwarder under BIFA Standard Trading Conditions. <strong>Placeholder brand &amp; contact details — replace with your own before going live.</strong></div>
+      </div>
+      <div class="foot-links">
+        <a href="#services">Services</a><a href="#pricing">Pricing</a><a href="#quote">Get a quote</a><a href="#contact">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // ----- Quote calculator state -----
+  const state = { dir:'uk2ng', mode:'air', delivery:'warehouse' };
+
+  const RATES = {
+    uk2ng:{ air:5.00, sea:3.50 },
+    ng2uk:{ air:6.00, sea:4.00 }
+  };
+  const HANDLING = 25;
+  const DOOR_SURCHARGE = 3.00; // per kg for door delivery to non-primary cities
+  const MIN_KG = 5;
+
+  function bindSeg(id, key){
+    document.querySelectorAll('#'+id+' button').forEach(b=>{
+      b.addEventListener('click', ()=>{
+        document.querySelectorAll('#'+id+' button').forEach(x=>x.classList.remove('on'));
+        b.classList.add('on');
+        state[key]=b.dataset.v;
+        calc();
+      });
+    });
+  }
+  bindSeg('dir','dir'); bindSeg('mode','mode'); bindSeg('delivery','delivery');
+  document.getElementById('weight').addEventListener('input', calc);
+  document.getElementById('city').addEventListener('change', calc);
+
+  function fmt(n){ return '£'+ n.toLocaleString('en-GB',{maximumFractionDigits:0}); }
+
+  function calc(){
+    let kg = Math.max(parseFloat(document.getElementById('weight').value)||0, 0);
+    const billKg = Math.max(kg, MIN_KG);
+    const city = document.getElementById('city').value;
+    const baseRate = RATES[state.dir][state.mode];
+    const freight = billKg * baseRate;
+
+    const isPrimary = (city==='Lagos');
+    let doorCost = 0;
+    if(state.delivery==='door'){
+      doorCost = billKg * (isPrimary ? 2.50 : DOOR_SURCHARGE);
+    }
+    const total = freight + doorCost + HANDLING;
+
+    // ETA
+    let eta = state.mode==='air' ? '5–7 working days' : '4–8 weeks';
+    if(state.delivery==='door' && state.mode==='air' && !isPrimary) eta='7–9 working days';
+
+    document.getElementById('total').innerHTML = fmt(total) + ' <small>est.</small>';
+    document.getElementById('rateLine').textContent =
+      (state.mode==='air'?'Air freight':'Sea freight') + ' · £'+baseRate.toFixed(2)+'/kg · ' +
+      (state.delivery==='door'?'door-to-door '+city : 'warehouse pickup');
+    document.getElementById('eta').textContent = '⏱ '+eta;
+
+    let bd = '<div><span>Freight ('+billKg+'kg × £'+baseRate.toFixed(2)+')</span><b>'+fmt(freight)+'</b></div>';
+    if(doorCost>0) bd += '<div><span>Door delivery — '+city+'</span><b>'+fmt(doorCost)+'</b></div>';
+    bd += '<div><span>Handling fee</span><b>'+fmt(HANDLING)+'</b></div>';
+    if(kg>0 && kg<MIN_KG) bd += '<div style="color:var(--gold)"><span>Min '+MIN_KG+'kg applied</span><b></b></div>';
+    document.getElementById('breakdown').innerHTML = bd;
+  }
+  calc();
+
+  // ----- Demo tracking -----
+  function trackIt(){
+    const v = document.getElementById('trackInput').value.trim();
+    const m = document.getElementById('trackMsg');
+    if(!v){ m.textContent='Please enter a tracking number.'; return; }
+    const stages=['📦 Booked & collected','🏷️ Consolidated at UK hub','✈️ In transit','🛃 Customs clearance','✅ Out for delivery'];
+    const s=stages[Math.abs(v.length*7)%stages.length];
+    m.textContent='Shipment '+v.toUpperCase()+': '+s+' (demo result — connect your live tracking system here).';
+  }
+
+  // ----- Reliable in-page navigation (works in sandboxed previews too) -----
+  document.querySelectorAll('a[href^="#"]').forEach(a=>{
+    a.addEventListener('click', (e)=>{
+      const id = a.getAttribute('href');
+      if(id.length>1){
+        const target = document.querySelector(id);
+        if(target){
+          e.preventDefault();
+          target.scrollIntoView({behavior:'smooth', block:'start'});
+        }
+      }
+    });
+  });
+
+  // ----- Scroll reveal -----
+  const io = new IntersectionObserver((es)=>{
+    es.forEach(e=>{ if(e.isIntersecting){ e.target.style.animation='rise .8s cubic-bezier(.2,.7,.2,1) forwards'; io.unobserve(e.target);} });
+  },{threshold:.12});
+  document.querySelectorAll('.card,.step,.sec-head,.quote-card,.ptable,.route-cols,.track-box,details').forEach(el=>{
+    el.style.opacity='0'; el.style.transform='translateY(24px)'; io.observe(el);
+  });
+</script>
+</body>
+</html>
