@@ -9,7 +9,7 @@ ExecStart=/usr/bin/python3 /opt/sentinel/sentinel.py scheduler
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=5
-User=root
+User=sentinel
 
 [Install]
 WantedBy=multi-user.target
